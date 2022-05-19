@@ -3,7 +3,7 @@ use std::{borrow::Cow, cmp::Ordering, num::NonZeroU64, ops::Range};
 
 use crate::{
     asset::EffectAsset,
-    render::{GpuDrawIndirect, Particle},
+    render::{GpuDrawIndirect, GpuSlice, Particle},
     ParticleEffect,
 };
 
@@ -44,6 +44,8 @@ pub struct EffectSlice {
     pub group_index: u32,
     /// Size of a single item in the slice.
     pub item_size: u32,
+    /// Index of the slice into the SliceList buffer.
+    pub slice_index: u32,
 }
 
 impl Ord for EffectSlice {
@@ -63,6 +65,7 @@ impl PartialOrd for EffectSlice {
 
 pub struct SliceRef {
     range: Range<u32>,
+    slice_index: u32,
     item_size: u32,
 }
 
@@ -77,9 +80,15 @@ impl SliceRef {
 }
 
 pub enum BufferKind {
+    /// Buffer containing the particles themselves.
     Particles,
+    /// Buffer containing the indices of the dead particles available for recycling.
     DeadList,
+    /// Buffer containing the metadata for the slices (batched instances).
+    SliceList,
+    /// Indirect draw buffer for the particles.
     DrawIndirect,
+    /// Index indirection buffer for particle sorting.
     IndirectBuffer,
 }
 
@@ -94,6 +103,8 @@ pub struct EffectBuffer {
     particle_buffer: Buffer,
     /// GPU buffer holding the indices of the dead particles for the entire group of effects.
     dead_list_buffer: Buffer,
+    /// GPU buffer holding the metadata of all the slices over the particle buffer.
+    slice_list_buffer: Buffer,
     /// GPU buffer holding the drawing indices for the entire group of effects.
     draw_indirect_buffer: Buffer,
     /// GPU buffer holding the indirection indices for the entire group of effects.
@@ -104,8 +115,10 @@ pub struct EffectBuffer {
     capacity: u32,
     /// Used buffer size, either from allocated slices or from slices in the free list.
     used_size: u32,
+    /// Number of used slices, either from allocated slices or from slices in the free list.
+    used_slice_count: u32,
     /// Collection of slices into the buffer, each slice being one effect instance.
-    slices: Vec<EffectSlice>,
+    //slices: Vec<EffectSlice>,
     /// Array of free ranges for new allocations.
     free_slices: Vec<Range<u32>>,
     /// Map of entities and slices.
@@ -152,10 +165,7 @@ impl EffectBuffer {
             } else {
                 "vfx_dead_list_buffer".to_owned()
             };
-            // The DeadList buffers contains its size as first element. This is a dirty trick to workaround
-            // the missing access to the Counter that we have with HLSL SM 5.0 for UAVs. This should be
-            // refactored to avoid the de-aligning "N+1" total size.
-            let mut content = Vec::<u32>::with_capacity((1 + capacity) as usize);
+            let mut content = Vec::<u32>::with_capacity(capacity as usize);
             content.push(capacity);
             for idx in 0..capacity {
                 content.push(capacity - 1 - idx);
@@ -164,6 +174,24 @@ impl EffectBuffer {
                 label: Some(&dead_list_label),
                 contents: cast_slice(content.as_slice()),
                 usage: BufferUsages::COPY_DST | BufferUsages::STORAGE,
+            })
+        };
+
+        assert_eq!(std::mem::size_of::<GpuSlice>(), 16);
+        let slice_list_buffer = {
+            let slice_list_label = if let Some(label) = label {
+                format!("{}_slice_list", label)
+            } else {
+                "vfx_slice_list_buffer".to_owned()
+            };
+            // Allocate for up to 256 slices per buffer by default
+            let slice_list_capacity_bytes: BufferAddress =
+                256_u64 * std::mem::size_of::<GpuSlice>() as u64;
+            render_device.create_buffer(&BufferDescriptor {
+                label: Some(&slice_list_label),
+                size: slice_list_capacity_bytes,
+                usage: BufferUsages::COPY_DST | BufferUsages::STORAGE,
+                mapped_at_creation: false,
             })
         };
 
@@ -202,12 +230,14 @@ impl EffectBuffer {
         EffectBuffer {
             particle_buffer,
             dead_list_buffer,
+            slice_list_buffer,
             draw_indirect_buffer,
             indirect_buffer,
             item_size,
             capacity,
             used_size: 0,
-            slices: vec![],
+            used_slice_count: 0,
+            //slices: vec![],
             free_slices: vec![],
             slice_from_entity: HashMap::default(),
             //compute_pipeline,
@@ -239,9 +269,17 @@ impl EffectBuffer {
                 })
             }
             BufferKind::DeadList => {
-                let capacity_bytes = (self.capacity + 1) as u64 * 4_u64;
+                let capacity_bytes = self.capacity as u64 * 4_u64;
                 BindingResource::Buffer(BufferBinding {
                     buffer: &self.dead_list_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(capacity_bytes).unwrap()),
+                })
+            }
+            BufferKind::SliceList => {
+                let capacity_bytes = 256_u64 * std::mem::size_of::<GpuSlice>() as u64;
+                BindingResource::Buffer(BufferBinding {
+                    buffer: &self.slice_list_buffer,
                     offset: 0,
                     size: Some(NonZeroU64::new(capacity_bytes).unwrap()),
                 })
@@ -266,16 +304,55 @@ impl EffectBuffer {
         }
     }
 
-    /// Return a binding of the buffer for a starting range of a given size (in bytes).
-    // pub fn binding(&self, size: u32) -> BindingResource {
-    //     BindingResource::Buffer(BufferBinding {
-    //         buffer: &self.particle_buffer,
-    //         offset: 0,
-    //         size: Some(NonZeroU64::new(size as u64).unwrap()),
-    //     })
-    // }
+    /// Return a binding of the buffer for a starting range of a given number of elements.
+    pub fn binding(&self, kind: BufferKind, count: u32) -> BindingResource {
+        match kind {
+            BufferKind::Particles => {
+                let capacity_bytes = count as u64 * self.item_size as u64;
+                BindingResource::Buffer(BufferBinding {
+                    buffer: &self.particle_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(capacity_bytes).unwrap()),
+                })
+            }
+            BufferKind::DeadList => {
+                let capacity_bytes = count as u64 * 4_u64;
+                BindingResource::Buffer(BufferBinding {
+                    buffer: &self.dead_list_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(capacity_bytes).unwrap()),
+                })
+            }
+            BufferKind::SliceList => {
+                let capacity_bytes = count as u64 * std::mem::size_of::<GpuSlice>() as u64;
+                BindingResource::Buffer(BufferBinding {
+                    buffer: &self.slice_list_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(capacity_bytes).unwrap()),
+                })
+            }
+            BufferKind::DrawIndirect => {
+                let capacity_bytes = count as u64 * std::mem::size_of::<GpuDrawIndirect>() as u64;
+                BindingResource::Buffer(BufferBinding {
+                    buffer: &self.draw_indirect_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(capacity_bytes).unwrap()),
+                })
+            }
+            BufferKind::IndirectBuffer => {
+                let capacity_bytes = count as u64 * 4_u64;
+                BindingResource::Buffer(BufferBinding {
+                    buffer: &self.indirect_buffer,
+                    offset: 0,
+                    size: Some(NonZeroU64::new(capacity_bytes).unwrap()),
+                })
+            }
+        }
+    }
 
-    fn pop_free_slice(&mut self, size: u32) -> Option<Range<u32>> {
+    /// Find a free slice in the cache. Return the index of the slice into the slice list,
+    /// and the range of indices into both the particle buffer and dead list.
+    fn pop_free_slice(&mut self, size: u32) -> Option<(u32, Range<u32>)> {
         if self.free_slices.is_empty() {
             return None;
         }
@@ -299,7 +376,7 @@ impl EffectBuffer {
             }
         }
         self.free_slices.swap_remove(result.index);
-        Some(result.range)
+        Some((result.index, result.range))
     }
 
     /// Allocate a new slice in the buffer to store the particles of a single effect.
@@ -314,23 +391,33 @@ impl EffectBuffer {
             .checked_mul(item_size)
             .expect("Effect slice size overflow");
 
-        let range = if let Some(range) = self.pop_free_slice(capacity) {
-            range
+        let (slice_index, range) = if let Some((slice_index, range)) = self.pop_free_slice(capacity)
+        {
+            (slice_index, range)
         } else {
             let new_size = self.used_size.checked_add(capacity).unwrap();
-            if new_size <= self.capacity {
+            if new_size <= self.capacity && self.used_slice_count < 256 {
                 let range = self.used_size..new_size;
                 self.used_size = new_size;
-                range
+                let slice_index = self.used_slice_count;
+                self.used_slice_count += 1;
+                (slice_index, range)
             } else {
                 if self.used_size == 0 {
                     warn!("Cannot allocate slice of size {} ({} B) in effect cache buffer of capacity {}.", capacity, byte_size, self.capacity);
+                }
+                if self.used_slice_count == 256 {
+                    warn!("Cannot allocate more than 256 slices in a same effect cache buffer.");
                 }
                 return None;
             }
         };
 
-        Some(SliceRef { range, item_size })
+        Some(SliceRef {
+            slice_index,
+            range,
+            item_size,
+        })
     }
 
     // pub fn write_slice(&mut self, slice: &SliceRef, data: &[u8], queue: &RenderQueue) {
@@ -391,7 +478,7 @@ impl EffectCache {
         //pipeline: ComputePipeline,
         _queue: &RenderQueue,
     ) -> (EffectCacheId, EffectSlice) {
-        let (buffer_index, slice) = self
+        let (buffer_index, slice_ref) = self
             .buffers
             .iter_mut()
             .enumerate()
@@ -405,7 +492,7 @@ impl EffectCache {
                 // Try to allocate a slice into the buffer
                 buffer
                     .allocate_slice(capacity, item_size)
-                    .map(|slice| (buffer_index, slice))
+                    .map(|slice_ref| (buffer_index, slice_ref))
             })
             .or_else(|| {
                 // Cannot find any suitable buffer; allocate a new one
@@ -439,18 +526,20 @@ impl EffectCache {
             .unwrap();
         let id = EffectCacheId::new();
         trace!(
-            "Insert effect id={:?} buffer_index={} slice={:?}x{}B",
+            "Insert effect id={:?} buffer_index={} slice={:?}x{}B slice_index={}",
             id,
             buffer_index,
-            slice.range,
-            slice.item_size
+            slice_ref.range,
+            slice_ref.item_size,
+            slice_ref.slice_index,
         );
         let effect_slice = EffectSlice {
-            slice: slice.range.clone(),
+            slice: slice_ref.range.clone(),
             group_index: buffer_index as u32,
-            item_size: slice.item_size,
+            item_size: slice_ref.item_size,
+            slice_index: slice_ref.slice_index,
         };
-        self.effects.insert(id, (buffer_index, slice));
+        self.effects.insert(id, (buffer_index, slice_ref));
         return (id, effect_slice);
     }
 
@@ -461,6 +550,7 @@ impl EffectCache {
                 slice: slice_ref.range.clone(),
                 group_index: *buffer_index as u32,
                 item_size: slice_ref.item_size,
+                slice_index: slice_ref.slice_index,
             })
             .unwrap()
     }

@@ -12,19 +12,27 @@ struct SimParams {
 struct EffectParams {
     // Global acceleration (gravity-like) to apply to all particles this frame.
     accel: vec3<f32>;
-    //
-    __pad: f32;
+    // Offset to add to the particle index to access it in its GPU particle buffer.
+    // Same as Spawner::particle_base, but for the update pass.
+    particle_base: u32;
 };
 
 struct Spawner {
     // Spawner origin in world space.
     origin: vec4<f32>;
-    // Number of particles to spawn this frame.
-    spawn: i32;
+    // Number of particles to spawn this frame, if possible.
+    // This will be capped to the number of dead particles available for recycling.
+    spawn_count: u32;
     // Spawner PRNG seed.
     seed: u32;
+    // Offset to add to the particle index to access it in its GPU particle buffer.
+    // Same as Spawner::particle_base, but for the init pass.
+    particle_base: u32;
+    // Index of the slice into the SliceList.
+    slice_index: u32;
     //
-    __pad: vec3<f32>;
+    __pad2: vec4<f32>;
+    __pad3: vec4<f32>;
 };
 
 // Indirect dispatch buffer.
@@ -32,11 +40,32 @@ struct DispatchBuffer {
     x: atomic<u32>;
     y: u32;
     z: u32;
-    // Number of dead particles when the dispatch is submitted. Copied from `DeadList.count` with
-    // a buffer copy instruction, before the update pass. Used to limit the number of threads
-    // accessing the dead list buffer in parallel, so that they don't drop its count below zero.
-    dead_count: u32;
 };
+
+// List of indices of dead particles.
+struct DeadList {
+    // Indices of dead particles into the particle buffer. Only values at an
+    // index < 'count' in this array are valid; other values are garbage.
+    indices: [[stride(4)]] array<u32>;
+};
+
+struct Slice {
+    // Base index into the ParticleBuffer and the DeadList.
+    base_index: u32,
+    // Number of consecutive items in the slice.
+    count: u32,
+    // Number of consecutive "available" dead particle indices in the DeadList indices array. This is the
+    // number of particles actually dead that can be recycled this frame.
+    dead_count: atomic<u32>;
+    // Number of dead particles when the dispatch is submitted. Copied from `dead_count` before the update
+    // pass. Used to limit the number of threads accessing the dead list buffer in parallel, so that they
+    // don't drop its count below zero.
+    max_spawn_count: u32;
+}
+
+// struct SliceList {
+//     slices: [[stride(16)]] array<Slice>;
+// }
 
 // Single indirect draw call (via draw_indirect / multi_draw_indirect / multi_draw_indirect_count).
 struct DrawIndirect {
@@ -67,17 +96,6 @@ struct DrawIndexedIndirect {
 // Indirection buffer for particle sorting.
 struct IndirectBuffer {
     // Indices into the particle buffer.
-    indices: [[stride(4)]] array<u32>;
-};
-
-// List of indices of dead particles.
-struct DeadList {
-    // Number of consecutive "available" dead particle indices in the indices
-    // array below. This is the number of particles actually dead that can be
-    // recycled this frame.
-    count: atomic<u32>;
-    // Indices of dead particles into the particle buffer. Only values at an
-    // index < 'count' in this array are valid; other values are garbage.
     indices: [[stride(4)]] array<u32>;
 };
 

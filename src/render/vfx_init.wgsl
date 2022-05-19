@@ -17,6 +17,7 @@ let tau: f32 = 6.283185307179586476925286766559;
 [[group(1), binding(0)]] var<storage, read_write> dead_list : DeadList;
 [[group(2), binding(0)]] var<uniform> spawner : Spawner;
 [[group(3), binding(0)]] var<storage, read_write> dispatch : DispatchBuffer;
+[[group(4), binding(0)]] var<storage, read_write> slice : Slice;
 
 struct PosVel {
     pos: vec3<f32>;
@@ -37,31 +38,34 @@ fn init_lifetime() -> f32 {
 fn main([[builtin(global_invocation_id)]] global_invocation_id: vec3<u32>) {
     // Clamp the current iteration to the number of particles to spawn, and to the number
     // of dead particles that are available for such spawning.
-    let index = global_invocation_id.x;
-    let spawn_count = min(u32(spawner.spawn), dispatch.dead_count);
-    if (index >= spawn_count) {
+    let spawn_index = global_invocation_id.x;
+    let spawn_count = min(spawner.spawn_count, dead_list.max_spawn_count);
+    if (spawn_index >= spawn_count) {
         return;
     }
 
     // Recycle a dead particle
     let dead_index = atomicSub(&dead_list.count, 1u) - 1u;
-    let index = dead_list.indices[dead_index];
+    let local_index = dead_list.indices[dead_index];
 
     // Update PRNG seed for this particle
-    seed = pcg_hash(index ^ spawner.seed);
+    seed = pcg_hash(local_index ^ spawner.seed);
 
     // Initialize new particle
-    var posVel = init_pos_vel(index);
+    var posVel = init_pos_vel(local_index);
     var vPos = posVel.pos + spawner.origin.xyz;
     var vVel = posVel.vel;
     var vAge = 0.0;
     var vLifetime = init_lifetime();
 
+    // Actual index in global buffer
+    let global_index = spawner.particle_base + local_index;
+
     // Write the initialized particle
-    particle_buffer.particles[index].pos = vPos;
-    particle_buffer.particles[index].vel = vVel;
-    particle_buffer.particles[index].age = vAge;
-    particle_buffer.particles[index].lifetime = vLifetime;
+    particle_buffer.particles[global_index].pos = vPos;
+    particle_buffer.particles[global_index].vel = vVel;
+    particle_buffer.particles[global_index].age = vAge;
+    particle_buffer.particles[global_index].lifetime = vLifetime;
 
     // Increment dispatch for update
     //
