@@ -9,14 +9,13 @@ use crate::{
 
 use bevy::{
     asset::{AssetEvent, Assets, Handle, HandleUntyped},
-    core::{cast_slice, FloatOrd, Pod, Time, Zeroable},
-    core_pipeline::Transparent3d,
+    core::{cast_slice, FloatOrd, Time},
     ecs::{
         prelude::*,
         system::{lifetimeless::*, SystemState},
     },
     log::{trace, warn},
-    math::{const_vec3, Mat4, Vec2, Vec3, Vec4Swizzles},
+    math::{const_vec3, Mat4, Rect, Vec2, Vec3, Vec4Swizzles},
     reflect::TypeUuid,
     render::{
         color::Color,
@@ -29,12 +28,20 @@ use bevy::{
         view::{ComputedVisibility, ExtractedView, ViewUniform, ViewUniformOffset, ViewUniforms},
         RenderWorld,
     },
-    sprite::Rect,
     transform::components::GlobalTransform,
     utils::{HashMap, HashSet},
 };
 use bytemuck::cast_slice_mut;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use rand::Rng;
+use std::{
+    borrow::Cow,
+    cmp::Ordering,
+    num::NonZeroU64,
+    ops::Range,
+    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
+};
+
+use crate::{asset::EffectAsset, render::Particle, ParticleEffect};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectSlice {
@@ -497,7 +504,7 @@ impl EffectCache {
             .or_else(|| {
                 // Cannot find any suitable buffer; allocate a new one
                 let buffer_index = self.buffers.len();
-                let byte_size = capacity.checked_mul(item_size).expect(&format!(
+                let byte_size = capacity.checked_mul(item_size).unwrap_or_else(|| panic!(
                     "Effect size overflow: capacity={} item_size={}",
                     capacity, item_size
                 ));

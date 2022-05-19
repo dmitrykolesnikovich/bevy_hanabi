@@ -15,6 +15,8 @@ struct EffectParams {
     // Offset to add to the particle index to access it in its GPU particle buffer.
     // Same as Spawner::particle_base, but for the update pass.
     particle_base: u32;
+
+    force_field: array<ForceFieldParam, 16>;
 };
 
 struct Spawner {
@@ -66,6 +68,15 @@ struct Slice {
 // struct SliceList {
 //     slices: [[stride(16)]] array<Slice>;
 // }
+
+struct ForceFieldParam {
+    position: vec3<f32>;
+    max_radius: f32;
+    min_radius: f32;
+    mass: f32;
+    force_exponent: f32;
+    conform_to_sphere: f32;
+};
 
 // Single indirect draw call (via draw_indirect / multi_draw_indirect / multi_draw_indirect_count).
 struct DrawIndirect {
@@ -158,4 +169,8 @@ fn rand4(input: u32) -> vec4<f32> {
     var r22 = r2 >> 8u;
     var w = to_float01(r22);
     return vec4<f32>(x, y, z, w);
+}
+
+fn proj(u: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
+    return dot(v, u) / dot(u,u) * u;
 }

@@ -1,16 +1,16 @@
-//! Example of using the circle spawner.
+//! Example of using the circle spawner with random velocity.
 //! A sphere spawns dust in a circle.
 
 use bevy::{
     prelude::*,
-    render::{options::WgpuOptions, render_resource::WgpuFeatures},
+    render::{render_resource::WgpuFeatures, settings::WgpuSettings},
 };
 
 use bevy_hanabi::*;
-use bevy_inspector_egui::WorldInspectorPlugin;
+//use bevy_inspector_egui::WorldInspectorPlugin;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut options = WgpuOptions::default();
+    let mut options = WgpuSettings::default();
     options
         .features
         .set(WgpuFeatures::VERTEX_WRITABLE_STORAGE, true);
@@ -65,7 +65,7 @@ fn setup(
             center: Vec3::Y * 0.1,
             axis: Vec3::Y,
             radius: 0.4,
-            speed: 1.0,
+            speed: Value::Uniform((1.0, 1.5)),
             dimension: ShapeDimension::Surface,
         })
         .render(ParticleTextureModifier {
@@ -78,23 +78,29 @@ fn setup(
     );
 
     // The ground
-    commands.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Plane { size: 4.0 })),
-        material: materials.add(Color::BLUE.into()),
-        ..Default::default()
-    });
+    commands
+        .spawn_bundle(PbrBundle {
+            mesh: meshes.add(Mesh::from(shape::Plane { size: 4.0 })),
+            material: materials.add(Color::BLUE.into()),
+            ..Default::default()
+        })
+        .insert(Name::new("ground"));
 
     // The sphere
-    commands.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::UVSphere {
-            radius: 1.0,
-            sectors: 32,
-            stacks: 16,
-        })),
-        material: materials.add(Color::CYAN.into()),
-        transform: Transform::from_translation(Vec3::Y),
-        ..Default::default()
-    });
+    commands
+        .spawn_bundle(PbrBundle {
+            mesh: meshes.add(Mesh::from(shape::UVSphere {
+                radius: 1.0,
+                sectors: 32,
+                stacks: 16,
+            })),
+            material: materials.add(Color::CYAN.into()),
+            transform: Transform::from_translation(Vec3::Y),
+            ..Default::default()
+        })
+        .insert(Name::new("sphere"));
 
-    commands.spawn_bundle(ParticleEffectBundle::new(effect));
+    commands
+        .spawn_bundle(ParticleEffectBundle::new(effect))
+        .insert(Name::new("effect"));
 }

@@ -10,10 +10,11 @@
     missing_docs
 )]
 #![allow(dead_code)] // TEMP
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
-//! Hanabi -- a particle system plugin for the Bevy game engine.
+//! Hanabi -- a GPU particle system plugin for the Bevy game engine.
 //!
-//! This library provides a particle system for the Bevy game engine.
+//! This library provides a GPU-based particle system for the Bevy game engine.
 //!
 //! # Example
 //!
@@ -28,7 +29,7 @@
 //!     .run();
 //! ```
 //!
-//! Create an EffectAsset describing a visual effect, then add an
+//! Create an [`EffectAsset`] describing a visual effect, then add an
 //! instance of that effect to an entity:
 //!
 //! ```
@@ -57,7 +58,7 @@
 //!         center: Vec3::ZERO,
 //!         radius: 2.,
 //!         dimension: ShapeDimension::Surface,
-//!         speed: 6.,
+//!         speed: 6.0.into(),
 //!     })
 //!     // Every frame, add a gravity-like acceleration downward
 //!     .update(AccelModifier {
@@ -89,17 +90,23 @@ mod plugin;
 mod render;
 mod spawn;
 
+#[cfg(test)]
+mod test_utils;
+
 pub use asset::EffectAsset;
 pub use bundle::ParticleEffectBundle;
 pub use gradient::{Gradient, GradientKey};
 pub use modifiers::{
-    AccelModifier, ColorOverLifetimeModifier, InitModifier, ParticleTextureModifier,
-    PositionCircleModifier, PositionSphereModifier, RenderModifier, ShapeDimension,
-    SizeOverLifetimeModifier, UpdateModifier,
+    AccelModifier, ColorOverLifetimeModifier, ForceFieldModifier, ForceFieldParam, InitModifier,
+    ParticleTextureModifier, PositionCircleModifier, PositionSphereModifier, RenderModifier,
+    ShapeDimension, SizeOverLifetimeModifier, UpdateModifier, FFNUM,
 };
 pub use plugin::HanabiPlugin;
 pub use render::EffectCacheId;
 pub use spawn::{Spawner, Value};
+
+#[cfg(not(any(feature = "2d", feature = "3d")))]
+compile_error!("Enable either the '2d' or '3d' feature.");
 
 /// Extension trait to write a floating point scalar or vector constant in a format
 /// matching the WGSL grammar.
@@ -123,50 +130,60 @@ pub trait ToWgslString {
 impl ToWgslString for f32 {
     fn to_wgsl_string(&self) -> String {
         let s = format!("{:.6}", self);
-        s.trim_end_matches("0").to_string()
+        s.trim_end_matches('0').to_string()
     }
 }
 
 impl ToWgslString for f64 {
     fn to_wgsl_string(&self) -> String {
         let s = format!("{:.15}", self);
-        s.trim_end_matches("0").to_string()
+        s.trim_end_matches('0').to_string()
     }
 }
 
 impl ToWgslString for Vec2 {
     fn to_wgsl_string(&self) -> String {
-        let s = format!(
+        format!(
             "vec2<f32>({0}, {1})",
             self.x.to_wgsl_string(),
             self.y.to_wgsl_string()
-        );
-        s.to_string()
+        )
     }
 }
 
 impl ToWgslString for Vec3 {
     fn to_wgsl_string(&self) -> String {
-        let s = format!(
+        format!(
             "vec3<f32>({0}, {1}, {2})",
             self.x.to_wgsl_string(),
             self.y.to_wgsl_string(),
             self.z.to_wgsl_string()
-        );
-        s.to_string()
+        )
     }
 }
 
 impl ToWgslString for Vec4 {
     fn to_wgsl_string(&self) -> String {
-        let s = format!(
+        format!(
             "vec4<f32>({0}, {1}, {2}, {3})",
             self.x.to_wgsl_string(),
             self.y.to_wgsl_string(),
             self.z.to_wgsl_string(),
             self.w.to_wgsl_string()
-        );
-        s.to_string()
+        )
+    }
+}
+
+impl ToWgslString for Value<f32> {
+    fn to_wgsl_string(&self) -> String {
+        match self {
+            Self::Single(x) => x.to_wgsl_string(),
+            Self::Uniform((a, b)) => format!(
+                "rand() * ({1} - {0}) + {0}",
+                a.to_wgsl_string(),
+                b.to_wgsl_string(),
+            ),
+        }
     }
 }
 
@@ -208,7 +225,7 @@ impl ParticleEffect {
     /// adding modifiers to the effect.
     pub fn spawner(&mut self, spawner: &Spawner) -> &mut Spawner {
         if self.spawner.is_none() {
-            self.spawner = Some(spawner.clone());
+            self.spawner = Some(*spawner);
         }
         self.spawner.as_mut().unwrap()
     }
@@ -236,7 +253,7 @@ mod tests {
         assert_eq!(s, "1.5");
         let s = 0.5_f32.to_wgsl_string();
         assert_eq!(s, "0.5");
-        let s = 0.123456789_f32.to_wgsl_string();
+        let s = 0.123_456_78_f32.to_wgsl_string();
         assert_eq!(s, "0.123457"); // 6 digits
     }
 
@@ -250,7 +267,7 @@ mod tests {
         assert_eq!(s, "1.5");
         let s = 0.5_f64.to_wgsl_string();
         assert_eq!(s, "0.5");
-        let s = 0.1234567890123456789_f64.to_wgsl_string();
+        let s = 0.123_456_789_012_345_67_f64.to_wgsl_string();
         assert_eq!(s, "0.123456789012346"); // 15 digits
     }
 
@@ -262,5 +279,13 @@ mod tests {
         assert_eq!(s, "vec3<f32>(1., 2., -1.)");
         let s = Vec4::new(1., 2., -1., 2.).to_wgsl_string();
         assert_eq!(s, "vec4<f32>(1., 2., -1., 2.)");
+    }
+
+    #[test]
+    fn to_wgsl_value_f32() {
+        let s = Value::Single(1.0_f32).to_wgsl_string();
+        assert_eq!(s, "1.");
+        let s = Value::Uniform((1.0_f32, 2.0_f32)).to_wgsl_string();
+        assert_eq!(s, "rand() * (2. - 1.) + 1.");
     }
 }

@@ -4,14 +4,14 @@
 use bevy::{
     math::Vec3Swizzles,
     prelude::*,
-    render::{options::WgpuOptions, render_resource::WgpuFeatures},
+    render::{render_resource::WgpuFeatures, settings::WgpuSettings},
 };
-use bevy_inspector_egui::WorldInspectorPlugin;
+//use bevy_inspector_egui::WorldInspectorPlugin;
 
 use bevy_hanabi::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut options = WgpuOptions::default();
+    let mut options = WgpuSettings::default();
     options
         .features
         .set(WgpuFeatures::VERTEX_WRITABLE_STORAGE, true);
@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_plugins(DefaultPlugins)
         .add_system(bevy::input::system::exit_on_esc_system)
         .add_plugin(HanabiPlugin)
-        .add_plugin(WorldInspectorPlugin::new())
+        //.add_plugin(WorldInspectorPlugin::new())
         .add_startup_system(setup)
         .add_system(update)
         .run();
@@ -51,18 +51,20 @@ fn setup(
     camera.transform.translation.z = camera.orthographic_projection.far / 2.0;
     commands.spawn_bundle(camera);
 
-    commands.spawn_bundle(PbrBundle {
-        mesh: meshes.add(Mesh::from(shape::Quad {
-            size: Vec2::splat(BOX_SIZE),
+    commands
+        .spawn_bundle(PbrBundle {
+            mesh: meshes.add(Mesh::from(shape::Quad {
+                size: Vec2::splat(BOX_SIZE),
+                ..Default::default()
+            })),
+            material: materials.add(StandardMaterial {
+                base_color: Color::BLACK,
+                unlit: true,
+                ..Default::default()
+            }),
             ..Default::default()
-        })),
-        material: materials.add(StandardMaterial {
-            base_color: Color::BLACK,
-            unlit: true,
-            ..Default::default()
-        }),
-        ..Default::default()
-    });
+        })
+        .insert(Name::new("box"));
 
     commands
         .spawn_bundle(PbrBundle {
@@ -80,7 +82,8 @@ fn setup(
         })
         .insert(Ball {
             velocity: Vec2::new(1.0, 2f32.sqrt()),
-        });
+        })
+        .insert(Name::new("ball"));
 
     let mut gradient = Gradient::new();
     gradient.add_key(0.0, Vec4::new(0.0, 1.0, 1.0, 1.0));
@@ -96,7 +99,7 @@ fn setup(
         }
         .init(PositionSphereModifier {
             radius: BALL_RADIUS,
-            speed: 0.2,
+            speed: 0.2.into(),
             dimension: ShapeDimension::Surface,
             ..Default::default()
         })
@@ -106,7 +109,9 @@ fn setup(
         .render(ColorOverLifetimeModifier { gradient }),
     );
 
-    commands.spawn_bundle(ParticleEffectBundle::new(effect).with_spawner(spawner));
+    commands
+        .spawn_bundle(ParticleEffectBundle::new(effect).with_spawner(spawner))
+        .insert(Name::new("effect"));
 }
 
 fn update(
@@ -122,7 +127,7 @@ fn update(
         let mut pos = transform.translation.xy() + ball.velocity * time.delta_seconds();
         let mut collision = false;
 
-        for (coord, vel_coord) in pos.as_mut().into_iter().zip(ball.velocity.as_mut()) {
+        for (coord, vel_coord) in pos.as_mut().iter_mut().zip(ball.velocity.as_mut()) {
             while *coord < -HALF_SIZE || *coord > HALF_SIZE {
                 if *coord < -HALF_SIZE {
                     *coord = 2.0 * -HALF_SIZE - *coord;

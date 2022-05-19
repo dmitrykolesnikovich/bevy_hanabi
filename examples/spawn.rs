@@ -1,16 +1,32 @@
 use bevy::{
     prelude::*,
-    render::{mesh::shape::Cube, options::WgpuOptions, render_resource::WgpuFeatures},
+    render::{
+        mesh::shape::Cube,
+        render_resource::WgpuFeatures,
+        settings::{WgpuLimits, WgpuSettings},
+    },
 };
-use bevy_inspector_egui::WorldInspectorPlugin;
+//use bevy_inspector_egui::WorldInspectorPlugin;
 
 use bevy_hanabi::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut options = WgpuOptions::default();
+    let mut options = WgpuSettings::default();
     options
         .features
         .set(WgpuFeatures::VERTEX_WRITABLE_STORAGE, true);
+
+    // Optional; test that a stronger constraint is handled correctly.
+    // On macOS the alignment is commonly 256 bytes, whereas on Desktop GPUs
+    // it can be much smaller, like 16 bytes only. Force 256 bytes here for
+    // the sake of exercising a bit that codepath, and as an example of how
+    // to force a particular limit.
+    let limits = WgpuLimits {
+        min_storage_buffer_offset_alignment: 256,
+        ..Default::default()
+    };
+    options.constrained_limits = Some(limits);
+
     // options
     //     .features
     //     .set(WgpuFeatures::MAPPABLE_PRIMARY_BUFFERS, false);
@@ -24,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_plugins(DefaultPlugins)
         .add_system(bevy::input::system::exit_on_esc_system)
         .add_plugin(HanabiPlugin)
-        .add_plugin(WorldInspectorPlugin::new())
+        //.add_plugin(WorldInspectorPlugin::new())
         .add_startup_system(setup)
         .run();
 
@@ -78,7 +94,7 @@ fn setup(
             center: Vec3::ZERO,
             radius: 2.,
             dimension: ShapeDimension::Surface,
-            speed: 6.,
+            speed: 6.0.into(),
         })
         .update(AccelModifier {
             accel: Vec3::new(0., -3., 0.),
@@ -101,11 +117,13 @@ fn setup(
         })
         .with_children(|p| {
             // Reference cube to visualize the emit origin
-            p.spawn().insert_bundle(PbrBundle {
-                mesh: cube.clone(),
-                material: mat.clone(),
-                ..Default::default()
-            });
+            p.spawn()
+                .insert_bundle(PbrBundle {
+                    mesh: cube.clone(),
+                    material: mat.clone(),
+                    ..Default::default()
+                })
+                .insert(Name::new("source"));
         });
 
     let mut gradient2 = Gradient::new();
@@ -134,11 +152,13 @@ fn setup(
         })
         .with_children(|p| {
             // Reference cube to visualize the emit origin
-            p.spawn().insert_bundle(PbrBundle {
-                mesh: cube.clone(),
-                material: mat.clone(),
-                ..Default::default()
-            });
+            p.spawn()
+                .insert_bundle(PbrBundle {
+                    mesh: cube.clone(),
+                    material: mat.clone(),
+                    ..Default::default()
+                })
+                .insert(Name::new("source"));
         });
 
     let mut gradient3 = Gradient::new();
@@ -156,7 +176,7 @@ fn setup(
             center: Vec3::ZERO,
             radius: 5.,
             dimension: ShapeDimension::Volume,
-            speed: 2.,
+            speed: 2.0.into(),
         })
         .update(AccelModifier {
             accel: Vec3::new(0., 5., 0.),
@@ -176,10 +196,12 @@ fn setup(
         })
         .with_children(|p| {
             // Reference cube to visualize the emit origin
-            p.spawn().insert_bundle(PbrBundle {
-                mesh: cube.clone(),
-                material: mat.clone(),
-                ..Default::default()
-            });
+            p.spawn()
+                .insert_bundle(PbrBundle {
+                    mesh: cube.clone(),
+                    material: mat.clone(),
+                    ..Default::default()
+                })
+                .insert(Name::new("source"));
         });
 }

@@ -3,8 +3,11 @@ use bevy::prelude::*;
 use crate::{
     asset::{InitLayout, RenderLayout, UpdateLayout},
     gradient::Gradient,
-    ToWgslString,
+    ToWgslString, Value,
 };
+
+/// Maximum number of components in the force field.
+pub const FFNUM: usize = 16;
 
 /// Trait to customize the initializing of newly spawned particles.
 pub trait InitModifier {
@@ -50,7 +53,7 @@ pub struct PositionCircleModifier {
     /// The circle radius.
     pub radius: f32,
     /// The radial speed of the particles on spawn.
-    pub speed: f32,
+    pub speed: Value<f32>,
     /// The shape dimension to spawn from.
     pub dimension: ShapeDimension,
 }
@@ -108,8 +111,7 @@ impl InitModifier for PositionCircleModifier {
             bitangent.to_wgsl_string(),
             radius_code,
             self.speed.to_wgsl_string()
-        )
-        .to_string();
+        );
     }
 }
 
@@ -121,7 +123,7 @@ pub struct PositionSphereModifier {
     /// The sphere radius.
     pub radius: f32,
     /// The radial speed of the particles on spawn.
-    pub speed: f32,
+    pub speed: Value<f32>,
     /// The shape dimension to spawn from.
     pub dimension: ShapeDimension,
 }
@@ -168,8 +170,7 @@ impl InitModifier for PositionSphereModifier {
             self.center.to_wgsl_string(),
             radius_code,
             self.speed.to_wgsl_string()
-        )
-        .to_string();
+        );
     }
 }
 
@@ -224,5 +225,84 @@ pub struct AccelModifier {
 impl UpdateModifier for AccelModifier {
     fn apply(&self, layout: &mut UpdateLayout) {
         layout.accel = self.accel;
+    }
+}
+
+/// Parameters for the components making the force field.
+#[derive(Clone, Copy)]
+pub struct ForceFieldParam {
+    /// Position of the source of the force field.
+    pub position: Vec3,
+    /// Maximum radius of the sphere of influence, outside of which
+    /// the force field is null.
+    pub max_radius: f32,
+    /// Minimum radius of the sphere of influence, inside of which
+    /// the force field is null, avoiding the singularity at the source position.
+    pub min_radius: f32,
+    /// The intensity of the force is proportional to mass. Note that the particles_update.wgsl shader will
+    /// ignore all subsequent force field components after it encounters a component with a mass of zero.
+    /// To change the force from an attracting one to a repulsive one, simply set the mass to a negative value.
+    pub mass: f32,
+    /// The force field is proportional to `1 / distance^force_exponent`.
+    pub force_exponent: f32,
+    /// If set to true, the particles that enter within the `min_radius` will conform to a sphere around the
+    /// source position, appearing like a recharging effect.
+    pub conform_to_sphere: bool,
+}
+
+impl Default for ForceFieldParam {
+    fn default() -> Self {
+        // defaults to no force field (a mass of 0)
+        ForceFieldParam {
+            position: Vec3::new(0., 0., 0.),
+            min_radius: 0.1,
+            max_radius: 0.0,
+            mass: 0.,
+            force_exponent: 0.0,
+            conform_to_sphere: false,
+        }
+    }
+}
+
+/// A modifier to apply a force field to all particles each frame. The force field is made up of
+/// point sources, also called 'components'. The maximum number of components is set with [`FFNUM`].
+#[derive(Default, Clone, Copy)]
+pub struct ForceFieldModifier {
+    /// Array of force field components.
+    pub force_field: [ForceFieldParam; FFNUM],
+}
+
+impl ForceFieldModifier {
+    /// Instantiate a ForceFieldModifier.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the number of sources exceeds [`FFNUM`].
+    pub fn new<T>(point_attractors: T) -> Self
+    where
+        T: IntoIterator<Item = ForceFieldParam>,
+    {
+        let mut force_field = [ForceFieldParam::default(); FFNUM];
+
+        for (i, p_attractor) in point_attractors.into_iter().enumerate() {
+            if i > FFNUM {
+                panic!("Too many point attractors");
+            }
+            force_field[i] = p_attractor;
+        }
+
+        Self { force_field }
+    }
+
+    /// Perhaps will be deleted in the future.
+    // Delete me?
+    pub fn add_or_replace(&mut self, point_attractor: ForceFieldParam, index: usize) {
+        self.force_field[index] = point_attractor;
+    }
+}
+
+impl UpdateModifier for ForceFieldModifier {
+    fn apply(&self, layout: &mut UpdateLayout) {
+        layout.force_field = self.force_field;
     }
 }

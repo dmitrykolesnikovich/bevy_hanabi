@@ -5,7 +5,7 @@
 [![Crate](https://img.shields.io/crates/v/bevy_hanabi.svg)](https://crates.io/crates/bevy_hanabi)
 [![Build Status](https://github.com/djeedai/bevy_hanabi/actions/workflows/ci.yaml/badge.svg)](https://github.com/djeedai/bevy_hanabi/actions/workflows/ci.yaml)
 [![Coverage Status](https://coveralls.io/repos/github/djeedai/bevy_hanabi/badge.svg?branch=main)](https://coveralls.io/github/djeedai/bevy_hanabi?branch=main)
-[![Bevy tracking](https://img.shields.io/badge/Bevy%20tracking-v0.6-lightblue)](https://github.com/bevyengine/bevy/blob/main/docs/plugins_guidelines.md#main-branch-tracking)
+[![Bevy tracking](https://img.shields.io/badge/Bevy%20tracking-v0.7-lightblue)](https://github.com/bevyengine/bevy/blob/main/docs/plugins_guidelines.md#main-branch-tracking)
 
 Hanabi — a GPU particle system for the Bevy game engine.
 
@@ -17,7 +17,18 @@ The Hanabi particle system is a modern GPU-based particle system for the Bevy ga
 
 ## Usage
 
-The 🎆 Bevy Hanabi plugin is only compatible with Bevy v0.6.
+The 🎆 Bevy Hanabi plugin is compatible with Bevy >= v0.6; see [Compatible Bevy versions](#compatible-bevy-versions).
+
+### Add the dependency
+
+Add the `bevy_hanabi` dependency to `Cargo.toml`:
+
+```toml
+[dependencies]
+bevy_hanabi = "0.2"
+```
+
+See also [Features](#features) below for the list of supported features.
 
 ### System setup
 
@@ -60,7 +71,7 @@ fn setup(mut effects: ResMut<Assets<EffectAsset>>) {
             center: Vec3::ZERO,
             radius: 2.,
             dimension: ShapeDimension::Surface,
-            speed: 6.,
+            speed: 6.0.into(),
         })
         // Every frame, add a gravity-like acceleration downward
         .update(AccelModifier {
@@ -97,10 +108,38 @@ See the [`examples/`](https://github.com/djeedai/bevy_hanabi/examples) folder.
 Animate an emitter by moving its `Transform` component, and emit textured quad particles with a `ColorOverLifetimeModifier`.
 
 ```shell
-cargo run --example gradient -features="bevy/bevy_winit bevy/png"
+cargo run --example gradient --features="bevy/bevy_winit bevy/bevy_pbr bevy/png 3d"
 ```
 
-![gradient](https://raw.githubusercontent.com/djeedai/bevy_hanabi/main/examples/gradient.gif)
+![gradient](https://raw.githubusercontent.com/djeedai/bevy_hanabi/471669f735f202d3877969e25c488e5d74fc3393/examples/gradient.gif)
+
+### Force Field
+
+This example demonstrates the force field modifier `ForceFieldModifier`, which allows creating some attraction and repulsion sources affecting the motion of the particles.
+
+```shell
+cargo run --example force_field --features="bevy/bevy_winit bevy/bevy_pbr 3d"
+```
+
+![force_field](https://raw.githubusercontent.com/djeedai/bevy_hanabi/471669f735f202d3877969e25c488e5d74fc3393/examples/force_field.gif)
+
+### 2D
+
+This example shows how to use 🎆 Hanabi with a 2D camera.
+
+```shell
+cargo run --example 2d --features="bevy/bevy_winit bevy/bevy_sprite 2d"
+```
+
+### Activate
+
+This example demonstrates manual activation and deactivation of a spawner, from code (CPU). The circle bobs up and down in the water, spawning square bubbles when in the water only.
+
+```shell
+cargo run --example activate --features="bevy/bevy_winit bevy/bevy_pbr 3d"
+```
+
+![activate](https://raw.githubusercontent.com/djeedai/bevy_hanabi/471669f735f202d3877969e25c488e5d74fc3393/examples/activate.gif)
 
 ### Spawn
 
@@ -113,10 +152,40 @@ This example demonstrates three spawn modes:
 It also shows the applying of constant force (downward gravity-like, or upward smoke-style).
 
 ```shell
-cargo run --example spawn --features="bevy/bevy_winit"
+cargo run --example spawn --features="bevy/bevy_winit bevy/bevy_pbr 3d"
 ```
 
-![spawn](https://raw.githubusercontent.com/djeedai/bevy_hanabi/main/examples/spawn.gif)
+![spawn](https://raw.githubusercontent.com/djeedai/bevy_hanabi/471669f735f202d3877969e25c488e5d74fc3393/examples/spawn.gif)
+
+### Spawn on Command
+
+This example demonstrates how to emit a burst of particles when an event occurs. This gives total control of the spawning to the user code.
+
+```shell
+cargo run --example spawn_on_command --features="bevy/bevy_winit bevy/bevy_pbr 3d"
+```
+
+![spawn](https://raw.githubusercontent.com/djeedai/bevy_hanabi/471669f735f202d3877969e25c488e5d74fc3393/examples/spawn_on_command.gif)
+
+### Circle
+
+This example demonstrates the `circle` spawner type, which emits particles along a circle perimeter or a disk surface. This allows for example simulating a dust ring around an object colliding with the ground.
+
+```shell
+cargo run --example circle --features="bevy/bevy_winit bevy/bevy_pbr bevy/png 3d"
+```
+
+![circle](https://raw.githubusercontent.com/djeedai/bevy_hanabi/471669f735f202d3877969e25c488e5d74fc3393/examples/circle.gif)
+
+### Random
+
+This example spawns particles with randomized parameters.
+
+```shell
+cargo run --example random --features="bevy/bevy_winit bevy/bevy_pbr 3d"
+```
+
+![spawn](https://raw.githubusercontent.com/djeedai/bevy_hanabi/471669f735f202d3877969e25c488e5d74fc3393/examples/random.gif)
 
 ## Feature List
 
@@ -126,6 +195,7 @@ cargo run --example spawn --features="bevy/bevy_winit"
   - [x] Repeated burst
   - [x] Spawner resetting
   - [x] Spawner activation/deactivation
+  - [x] Randomized spawning parameters
 - Initialize
   - [ ] Constant position
   - [x] Position over shape
@@ -137,14 +207,14 @@ cargo run --example spawn --features="bevy/bevy_winit"
     - [ ] generic mesh / point cloud (?)
   - [ ] Random position offset
   - [x] Constant velocity
-  - [ ] Random velocity
+  - [x] Random velocity
   - [ ] Constant color
   - [ ] Random color
 - Update
   - [x] Motion integration
   - [x] Apply forces
     - [x] Constant (gravity)
-    - [ ] Force field
+    - [x] Force field
   - [ ] Collision
     - [ ] Shape
       - [ ] plane
@@ -157,17 +227,38 @@ cargo run --example spawn --features="bevy/bevy_winit"
   - [ ] Face camera
   - [ ] Face constant direction
 - Render
-  - [x] Quad (sprite)
+  - [x] Quad
     - [x] Textured
   - [ ] Generic 3D mesh
   - [ ] Deformation
     - [ ] Velocity (trail)
+  - [x] Camera support
+    - [x] 2D cameras ([`Camera2d`](https://docs.rs/bevy/0.7.0/bevy/render/camera/struct.Camera2d.html)) only
+    - [x] 3D cameras ([`Camera3d`](https://docs.rs/bevy/0.7.0/bevy/render/camera/struct.Camera3d.html)) only
+    - [x] Simultaneous dual 2D/3D cameras
 - Debug
   - [x] GPU debug labels / groups
   - [ ] Debug visualization
     - [ ] Position magnitude
     - [ ] Velocity magnitude
     - [ ] Age / lifetime
+
+## Features
+
+🎆 Bevy Hanabi supports the following features:
+
+| Feature | Default | Description |
+|---|:-:|---|
+| `2d` | ✔ | Enable rendering through 2D cameras ([`Camera2d`](https://docs.rs/bevy/0.7.0/bevy/render/camera/struct.Camera2d.html)) |
+| `3d` | ✔ | Enable rendering through 3D cameras ([`Camera3d`](https://docs.rs/bevy/0.7.0/bevy/render/camera/struct.Camera3d.html)) |
+
+For optimization purpose, users of a single type of camera can disable the other type by skipping default features in their `Cargo.toml`. For example to use only the 3D mode:
+
+```toml
+bevy_hanabi = { version = "0.2", default-features = false, features = [ "3d" ] }
+```
+
+There is currently no support for `CameraUi`. If you feel you need this feature, please [open a GitHub issue](https://github.com/djeedai/bevy_hanabi/issues/new) explaining your use case and why the `Camera2d` and `Camera3d` options cannot be used.
 
 ## Compatible Bevy versions
 
@@ -177,4 +268,5 @@ Compatibility of `bevy_hanabi` versions:
 
 | `bevy_hanabi` | `bevy` |
 | :--           | :--    |
+| `0.2`         | `0.7`  |
 | `0.1`         | `0.6`  |

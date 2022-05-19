@@ -45,6 +45,9 @@ fn main([[builtin(global_invocation_id)]] global_invocation_id: vec3<u32>) {
         vVel = vVel + (effect_params.accel * sim_params.dt);
         vPos = vPos + (vVel * sim_params.dt);
 
+        // Force field
+{{FORCE_FIELD_CODE}}
+
         // Write back particle itself
         particle_buffer.particles[global_index].pos = vPos;
         particle_buffer.particles[global_index].vel = vVel;
