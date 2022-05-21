@@ -5,7 +5,7 @@ use bevy::{
     core::{cast_slice, FloatOrd, Pod, Time, Zeroable},
     ecs::{
         prelude::*,
-        system::{lifetimeless::*, ParamSet, SystemState},
+        system::{lifetimeless::*, ParamSet, SystemParam, SystemState},
     },
     log::trace,
     math::{const_vec3, Mat4, Rect, Vec2, Vec3, Vec4, Vec4Swizzles},
@@ -36,13 +36,6 @@ use bevy::core_pipeline::Transparent2d;
 #[cfg(feature = "3d")]
 use bevy::core_pipeline::Transparent3d;
 
-use crate::{
-    asset::EffectAsset,
-    modifiers::{ForceFieldParam, FFNUM},
-    spawn::{new_rng, Random},
-    Gradient, ParticleEffect, ToWgslString,
-};
-
 mod aligned_buffer_vec;
 mod compute_cache;
 mod effect_batcher;
@@ -51,13 +44,17 @@ mod pipeline_template;
 mod storage_vec;
 mod uniform_vec;
 
-use crate::{asset::EffectAsset, Gradient, ParticleEffect, ToWgslString};
+use crate::{
+    asset::EffectAsset,
+    modifiers::{ForceFieldParam, FFNUM},
+    spawn::{new_rng, Random},
+    Gradient, ParticleEffect, ToWgslString,
+};
+use aligned_buffer_vec::AlignedBufferVec;
 use effect_batcher::EffectBatcher;
 use effect_cache::BufferKind;
 use storage_vec::StorageVec;
 use uniform_vec::NamedUniformVec;
-
-use aligned_buffer_vec::AlignedBufferVec;
 
 pub use compute_cache::{ComputeCache, SpecializedComputePipeline};
 pub use effect_cache::{EffectBuffer, EffectCache, EffectCacheId, EffectSlice};
@@ -262,6 +259,8 @@ pub(crate) struct EffectParams {
     /// Offset to add to the particle index to access it in its GPU particle buffer.
     /// Same as [`SpawnerParams::particle_base`], but for the update pass.
     particle_base: u32,
+    /// Force field definition.
+    force_field: [ForceFieldParam; FFNUM],
 }
 
 /// GPU representation of [`SimParams`].
@@ -273,7 +272,6 @@ struct EffectParamsUniform {
     accel_z: f32,
     particle_base: u32,
     // FIXME - min_uniform_buffer_offset_alignment == 64B
-
     /// Force field components. One PullingForceFieldParam takes up 32 bytes.
     force_field: [ForceFieldStd140; FFNUM],
 }
@@ -285,6 +283,7 @@ impl Default for EffectParamsUniform {
             accel_y: 0.0,
             accel_z: 0.0,
             particle_base: 0,
+            force_field: [ForceFieldStd140::default(); FFNUM],
         }
     }
 }
@@ -296,18 +295,20 @@ impl From<EffectParams> for EffectParamsUniform {
             accel_y: src.accel[1],
             accel_z: src.accel[2],
             particle_base: src.particle_base,
+            force_field: src.force_field.map(|ffp| ffp.into()),
         }
     }
 }
 
+#[repr(C)]
 #[derive(Debug, Default, Clone, Copy, Pod, Zeroable, AsStd140)]
-pub struct ForceFieldStd140 {
-    pub position_or_direction: Vec3, FIXME - merge with f32 for alignemnt in std140
-    pub max_radius: f32,
-    pub min_radius: f32,
-    pub mass: f32,
-    pub force_exponent: f32,
-    pub conform_to_sphere: f32,
+pub(crate) struct ForceFieldStd140 {
+    position_or_direction: Vec3, // FIXME - merge with f32 for alignemnt in std140, now max_radius will start @ 16 bytes!
+    max_radius: f32,
+    min_radius: f32,
+    mass: f32,
+    force_exponent: f32,
+    conform_to_sphere: f32,
 }
 
 impl From<ForceFieldParam> for ForceFieldStd140 {
@@ -440,9 +441,9 @@ impl FromWorld for ParticlesPreparePipeline {
             source: ShaderSource::Wgsl(Cow::Owned(source)),
         });
 
-        let pipeline = render_device.create_compute_pipeline(&ComputePipelineDescriptor {
+        let pipeline = render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
             label: Some("vfx_prepare_pipeline"),
-            layout: Some(pipeline_layout),
+            layout: Some(&pipeline_layout),
             module: &shader_module,
             entry_point: "main",
         });
@@ -510,7 +511,7 @@ impl FromWorld for ParticlesInitPipeline {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: true,
-                    min_binding_size: BufferSize::new(std::mem::size_of::<u32>()),
+                    min_binding_size: BufferSize::new(std::mem::size_of::<u32>() as u64),
                 },
                 count: None,
             }],
@@ -663,7 +664,7 @@ impl FromWorld for ParticlesUpdatePipeline {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
-                    min_binding_size: BufferSize::new(std::mem::size_of::<u32>()),
+                    min_binding_size: BufferSize::new(std::mem::size_of::<u32>() as u64),
                 },
                 count: None,
             }],
@@ -898,7 +899,7 @@ impl SpecializedComputePipeline for ParticlesInitPipeline {
             source: ShaderSource::Wgsl(Cow::Owned(source)),
         });
 
-        let pipeline = render_device.create_compute_pipeline(&ComputePipelineDescriptor {
+        let pipeline = render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
             label: Some("vfx_init_pipeline"),
             layout: Some(&self.pipeline_layout),
             module: &shader_module,
@@ -925,7 +926,7 @@ impl Default for ParticleUpdatePipelineKey {
 impl SpecializedComputePipeline for ParticlesUpdatePipeline {
     type Key = ParticleUpdatePipelineKey;
 
-    fn specialize(&self, _key: Self::Key, render_device: &RenderDevice) -> ComputePipeline {
+    fn specialize(&self, key: Self::Key, render_device: &RenderDevice) -> ComputePipeline {
         trace!("Specializing update compute pipeline...");
 
         let mut source = VFX_UPDATE_SHADER_TEMPLATE.to_string();
@@ -939,7 +940,7 @@ impl SpecializedComputePipeline for ParticlesUpdatePipeline {
             source: ShaderSource::Wgsl(Cow::Owned(source)),
         });
 
-        render_device.create_compute_pipeline(&ComputePipelineDescriptor {
+        render_device.create_compute_pipeline(&RawComputePipelineDescriptor {
             label: Some("vfx_update_pipeline"),
             layout: Some(&self.pipeline_layout),
             module: &shader_module,
@@ -1283,7 +1284,6 @@ pub(crate) fn extract_effects(
 
         // Tick the effect's spawner to determine the spawn count for this frame
         let spawner = effect.spawner(&asset.spawner);
-        
         let spawn_count = spawner.tick(dt, &mut rng.0);
 
         // Extract the global effect acceleration to apply to all particles
@@ -1347,10 +1347,10 @@ pub(crate) fn extract_effects(
                 transform: transform.compute_matrix(),
                 accel,
                 rect: Rect {
-                    min: Vec2::ZERO,
-                    max: Vec2::new(0.2, 0.2), // effect
-                                              //.custom_size
-                                              //.unwrap_or_else(|| Vec2::new(size.width as f32, size.height as f32)),
+                    left: -0.1,
+                    right: 0.1,
+                    top: -0.1,
+                    bottom: 0.2, // effect.custom_size.unwrap_or_else(|| Vec2::new(size.width as f32, size.height as f32)),
                 },
                 has_image: asset.render_layout.particle_texture.is_some(),
                 image_handle_id: asset
@@ -1360,6 +1360,7 @@ pub(crate) fn extract_effects(
                     .map_or(HandleId::default::<Image>(), |handle| handle.id),
                 shader,
                 position_code,
+                force_field_code,
             },
         );
     }
@@ -1528,7 +1529,7 @@ pub struct EffectBatch {
     /// Update force field code.
     force_field_code: String,
     /// Prepare pipeline.
-    prepare_pipeline: ComputePipeline,
+    prepare_pipeline: Option<ComputePipeline>,
     /// Init compute pipeline specialized for this batch.
     init_pipeline: Option<ComputePipeline>,
     /// Update compute pipeline specialized for this batch.
@@ -1723,12 +1724,15 @@ pub struct EffectBindGroups {
     group_from_index: HashMap<u32, EffectBindGroup>,
 }
 
-type PipelineParams = ParamSet<(
-    Res<ParticlesPreparePipeline>,
-    Res<ParticlesInitPipeline>,
-    Res<ParticlesUpdatePipeline>,
-    Res<ParticlesRenderPipeline>,
-)>;
+#[derive(SystemParam)]
+struct PipelineParams<'w, 's> {
+    prepare_pipeline: Res<'w, ParticlesPreparePipeline>,
+    init_pipeline: Res<'w, ParticlesInitPipeline>,
+    update_pipeline: Res<'w, ParticlesUpdatePipeline>,
+    render_pipeline: Res<'w, ParticlesRenderPipeline>,
+    #[system_param(ignore)]
+    marker: std::marker::PhantomData<&'s usize>,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn queue_effects(
@@ -1752,10 +1756,10 @@ pub(crate) fn queue_effects(
 ) {
     trace!("queue_effects");
 
-    let prepare_pipeline = pipelines.p0();
-    let init_pipeline = pipelines.p1();
-    let update_pipeline = pipelines.p2();
-    let render_pipeline = pipelines.p3();
+    let prepare_pipeline = pipelines.prepare_pipeline;
+    let init_pipeline = pipelines.init_pipeline;
+    let update_pipeline = pipelines.update_pipeline;
+    let render_pipeline = pipelines.render_pipeline;
 
     // If an image has changed, the GpuImage has (probably) changed
     // for event in &events.images {
@@ -1939,7 +1943,6 @@ pub(crate) fn queue_effects(
             &init_pipeline,
             ParticleInitPipelineKey {
                 position_code: batch.position_code.clone(),
-                force_field_code: batch.force_field_code.clone(),
             },
             &render_device,
         );
@@ -1948,7 +1951,9 @@ pub(crate) fn queue_effects(
         // Specialize the update pipeline based on the effect batch
         let update_pipeline = update_compute_cache.specialize(
             &update_pipeline,
-            ParticleUpdatePipelineKey {},
+            ParticleUpdatePipelineKey {
+                force_field_code: batch.force_field_code.clone(),
+            },
             &render_device,
         );
         batch.update_pipeline = Some(update_pipeline.clone());
@@ -2045,7 +2050,8 @@ pub(crate) fn queue_effects(
                         entity,
                         sort_key: FloatOrd(0.0),
                         batch_range: None,
-                });
+                    });
+                }
             }
         }
     }
@@ -2526,7 +2532,8 @@ impl Node for ParticleUpdateNode {
                                 &bind_groups.common_particle_buffer,
                                 &[],
                             );
-                            let dead_list_offset = spawner_index * std::mem::size_of::<u32>();
+                            let dead_list_offset =
+                                spawner_index * std::mem::size_of::<u32>() as u32;
                             compute_pass.set_bind_group(
                                 1,
                                 &bind_groups.common_dead_list,
@@ -2650,7 +2657,7 @@ impl Node for ParticleUpdateNode {
                                 &bind_groups.common_particle_buffer,
                                 &[],
                             );
-                            let dead_list_offset = spawner_base * std::mem::size_of::<u32>();
+                            let dead_list_offset = spawner_base * std::mem::size_of::<u32>() as u32;
                             compute_pass.set_bind_group(
                                 1,
                                 &bind_groups.common_dead_list,

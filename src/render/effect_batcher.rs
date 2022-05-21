@@ -1,7 +1,10 @@
 use bevy::{asset::HandleId, prelude::*};
 use std::ops::Range;
 
-use super::{EffectBatch, EffectBatchSlice, EffectSlice, ExtractedEffect, LayoutFlags};
+use super::{
+    EffectBatch, EffectBatchSlice, EffectSlice, ExtractedEffect, ForceFieldParam, LayoutFlags,
+    FFNUM,
+};
 use crate::EffectAsset;
 
 trait SliceEx {
@@ -38,6 +41,7 @@ pub struct CurrentBatch {
     /// Position code for the init compute shader; part of the global "layout".
     /// TODO - Should be merged with `layout_flags`.
     position_code: String,
+    force_field_code: String,
     /// Optional handle to an image asset for the particle rendering.
     /// TODO - Should probably be more generic than this, as other rendering methods could
     /// need other kind of textures etc.
@@ -58,6 +62,7 @@ impl CurrentBatch {
             && self.image_handle_id == other.image_handle_id
             && self.shader == other.shader
             && self.position_code == other.position_code
+            && self.force_field_code == other.force_field_code
     }
 
     /// Merge another batch into the current batch. The other batch must be compatible
@@ -95,6 +100,8 @@ impl From<CurrentBatch> for EffectBatch {
             image_handle_id: batch.image_handle_id,
             shader: batch.shader,
             position_code: batch.position_code,
+            force_field_code: batch.force_field_code,
+            prepare_pipeline: None,
             init_pipeline: None,
             update_pipeline: None,
         }
@@ -143,6 +150,7 @@ impl EffectBatcher {
             image_handle_id: effect.image_handle_id,
             shader: effect.shader.clone(),
             position_code: effect.position_code.clone(),
+            force_field_code: effect.force_field_code.clone(),
         };
         self.free_spawner_base += 1;
 
@@ -174,7 +182,7 @@ mod tests {
 
     #[test]
     fn slice_ex() {
-        let s0 : Range<u32> = 4..32;
+        let s0: Range<u32> = 4..32;
         assert!(s0.is_adjacent_to(&(0u32..4u32)));
         assert!(!s0.is_adjacent_to(&(0u32..3u32)));
         assert!(s0.is_adjacent_to(&(32u32..40u32)));
@@ -204,17 +212,20 @@ mod tests {
             spawn_count: 245,
             transform: Mat4::from_translation(origin),
             accel,
+            force_field: [ForceFieldParam::default(); FFNUM],
             color: Color::WHITE,
-            rect: bevy::sprite::Rect::default(),
+            rect: bevy::math::Rect::default(),
             has_image: false,
             image_handle_id: HandleId::default::<Image>(),
             shader: Handle::<Shader>::default(),
             position_code: "".to_string(),
+            force_field_code: "".to_string(),
         };
         let slice = EffectSlice {
             slice: 0..5,
             group_index: 42,
             item_size: 64,
+            slice_index: 0,
         };
         batcher.insert(&effect, &slice);
         assert!(batcher.batches.is_empty()); // current_batch not yet finalized
@@ -275,12 +286,14 @@ mod tests {
             spawn_count: 245,
             transform: Mat4::from_translation(origin),
             accel,
+            force_field: [ForceFieldParam::default(); FFNUM],
             color: Color::WHITE,
-            rect: bevy::sprite::Rect::default(),
+            rect: bevy::math::Rect::default(),
             has_image: false,
             image_handle_id: HandleId::default::<Image>(),
             shader: Handle::<Shader>::default(),
             position_code: "".to_string(),
+            force_field_code: "".to_string(),
         };
 
         // Insert 2 compatible and adjacent slices
@@ -288,11 +301,13 @@ mod tests {
             slice: 0..5,
             group_index: 42,
             item_size: 64,
+            slice_index: 0,
         };
         let slice2 = EffectSlice {
             slice: 5..30,
             group_index: 42,
             item_size: 64,
+            slice_index: 0,
         };
         assert!(slice1.slice.is_adjacent_to(&slice2.slice));
         batcher.insert(&effect, &slice1);
@@ -314,6 +329,7 @@ mod tests {
             slice: 42..50,
             group_index: 42,
             item_size: 64,
+            slice_index: 0,
         };
         assert!(!slice2.slice.is_adjacent_to(&slice3.slice));
         batcher.insert(&effect, &slice3);
@@ -334,6 +350,7 @@ mod tests {
             slice: 50..62,
             group_index: 42,
             item_size: 32, // different item size
+            slice_index: 0,
         };
         assert!(slice3.slice.is_adjacent_to(&slice4.slice));
         batcher.insert(&effect, &slice4);

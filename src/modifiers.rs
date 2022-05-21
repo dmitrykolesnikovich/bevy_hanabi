@@ -229,7 +229,7 @@ impl UpdateModifier for AccelModifier {
 }
 
 /// Parameters for the components making the force field.
-#[derive(Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct ForceFieldParam {
     /// Position of the source of the force field.
     pub position: Vec3,
@@ -248,20 +248,6 @@ pub struct ForceFieldParam {
     /// If set to true, the particles that enter within the `min_radius` will conform to a sphere around the
     /// source position, appearing like a recharging effect.
     pub conform_to_sphere: bool,
-}
-
-impl Default for ForceFieldParam {
-    fn default() -> Self {
-        // defaults to no force field (a mass of 0)
-        ForceFieldParam {
-            position: Vec3::new(0., 0., 0.),
-            min_radius: 0.1,
-            max_radius: 0.0,
-            mass: 0.,
-            force_exponent: 0.0,
-            conform_to_sphere: false,
-        }
-    }
 }
 
 /// A modifier to apply a force field to all particles each frame. The force field is made up of

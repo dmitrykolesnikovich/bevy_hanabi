@@ -1,5 +1,11 @@
 use rand::Rng;
-use std::{borrow::Cow, cmp::Ordering, num::NonZeroU64, ops::Range};
+use std::{
+    borrow::Cow,
+    cmp::Ordering,
+    num::NonZeroU64,
+    ops::Range,
+    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
+};
 
 use crate::{
     asset::EffectAsset,
@@ -32,16 +38,6 @@ use bevy::{
     utils::{HashMap, HashSet},
 };
 use bytemuck::cast_slice_mut;
-use rand::Rng;
-use std::{
-    borrow::Cow,
-    cmp::Ordering,
-    num::NonZeroU64,
-    ops::Range,
-    sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
-};
-
-use crate::{asset::EffectAsset, render::Particle, ParticleEffect};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectSlice {
@@ -383,7 +379,7 @@ impl EffectBuffer {
             }
         }
         self.free_slices.swap_remove(result.index);
-        Some((result.index, result.range))
+        Some((result.index as u32, result.range))
     }
 
     /// Allocate a new slice in the buffer to store the particles of a single effect.

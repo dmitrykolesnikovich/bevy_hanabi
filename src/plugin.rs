@@ -16,8 +16,8 @@ use crate::{
     render::{
         extract_effect_events, extract_effects, prepare_effects, queue_effects, ComputeCache,
         DrawEffects, EffectAssetEvents, EffectBindGroups, EffectSystems, EffectsMeta,
-        ExtractedEffects, ImageBindGroups, ParticleUpdateNode, ParticlesInitPipeline,
-        ParticlesRenderPipeline, ParticlesUpdatePipeline, PipelineRegistry, SimParams,
+        ExtractedEffects, ParticleUpdateNode, ParticlesInitPipeline, ParticlesRenderPipeline,
+        ParticlesUpdatePipeline, PipelineRegistry, SimParams,
     },
     spawn::{self, Random},
 };
@@ -164,20 +164,3 @@ impl Plugin for HanabiPlugin {
         }
     }
 }
-
-// pub fn hanabi_spawn(
-//     time: Res<Time>,
-//     mut query: Query<(&mut ParticleEffect, &mut SpawnState, &mut UpdateState)>,
-// ) {
-//     for (ref mut effect, ref mut spawn_state, ref mut state) in query.iter_mut() {
-//         effect
-//             .spawner
-//             .spawn(spawn_state, state, time.delta_seconds());
-//     }
-// }
-
-// pub fn hanabi_update(time: Res<Time>, mut query: Query<(&mut ParticleEffect, &mut UpdateState)>) {
-//     for (ref mut effect, ref mut motion) in query.iter_mut() {
-//         effect.updater.update(motion, time.delta_seconds());
-//     }
-// }
